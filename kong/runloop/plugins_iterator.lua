@@ -159,6 +159,28 @@ local function get_plugin_config(plugin, name, ws_id)
   cfg.route_id = plugin.route and plugin.route.id
   cfg.service_id = plugin.service and plugin.service.id
   cfg.consumer_id = plugin.consumer and plugin.consumer.id
+  local is_global = true
+  local expr = ''
+  if cfg.route_id then
+    expr = string.format('%s %s == "%s"', expr, "route.id", cfg.route_id)
+    is_global = false
+  end
+  if cfg.service_id then
+    if expr ~= "" then
+      expr = expr .. " and "
+    end
+    expr = string.format('%s %s == "%s"', expr, "service.id", cfg.service_id)
+    is_global = false
+  end
+  if cfg.consumer_id then
+    if expr ~= "" then
+      expr = expr .. " and "
+    end
+    expr = string.format('%s %s == "%s"', expr, "consumer.id", cfg.consumer_id)
+    is_global = false
+  end
+  print("cfg = " .. require("inspect")(cfg))
+  cfg.expression = plugin.expression or expr
   cfg.plugin_instance_name = plugin.instance_name
   cfg.__plugin_id = plugin.id
   cfg.__ws_id = ws_id
@@ -424,8 +446,7 @@ end
 
 local function new_ws_data()
   return {
-    plugins = { [0] = 0 },
-    combos = {},
+    plugins = {},
   }
 end
 
@@ -494,22 +515,31 @@ function PluginsIterator.new(version)
   ENABLED_PLUGINS = ENABLED_PLUGINS or kong.configuration.loaded_plugins
 
   local ws_id = workspaces.get_workspace_id() or kong.default_workspace
-  local ws = {
-    [ws_id] = new_ws_data()
+  -- indexed by workspace
+  local plugins_table = {
+    [ws_id] = {}
   }
 
+  local schema_mod = require("resty.router.schema")
+  local router_mod = require("resty.router.router")
+  local context_mod = require("resty.router.context")
+
+  local schema = schema_mod.new()
+  schema:add_field("route.name", "String")
+  schema:add_field("route.id", "String")
+  schema:add_field("service.name", "String")
+  schema:add_field("service.id", "String")
+  -- schema:add_field("http.host", "String")
+  local context = context_mod.new(schema)
+  local router = router_mod.new(schema)
+
+
   local counter = 0
-  local globals
-  do
-    globals = {}
-    for _, phase in ipairs(NON_COLLECTING_PHASES) do
-      globals[phase] = { [0] = 0 }
-    end
-  end
 
   local configurable = {}
   local has_plugins = false
 
+  local globals = {}
   local page_size = kong.db.plugins.pagination.max_page_size
   for plugin, err in kong.db.plugins:each(page_size, GLOBAL_QUERY_OPTS) do
     if err then
@@ -517,9 +547,6 @@ function PluginsIterator.new(version)
     end
 
     local name = plugin.name
-    if not ENABLED_PLUGINS[name] then
-      return nil, name .. " plugin is in use but not enabled"
-    end
 
     if is_not_dbless and counter > 0 and counter % page_size == 0 and kong.core_cache then
       local new_version, err = kong.core_cache:get("plugins_iterator:version", TTL_ZERO, uuid)
@@ -535,85 +562,59 @@ function PluginsIterator.new(version)
       end
     end
 
-    if should_process_plugin(plugin) then
-      -- Get the plugin configuration for the specified workspace (ws_id)
-      local cfg = get_plugin_config(plugin, name, plugin.ws_id)
-      if cfg then
-        has_plugins = true
+    if not should_process_plugin(plugin) then
+      goto continue
+    end
+    -- Get the plugin configuration for the specified workspace (ws_id)
+    local cfg = get_plugin_config(plugin, name, plugin.ws_id)
+    if not cfg then
+      goto continue
+    end
+    has_plugins = true
 
-        if CONFIGURABLE_PLUGINS[name] then
-          configurable[name] = configurable[name] or {}
-          configurable[name][#configurable[name] + 1] = cfg
-        end
-
-        local data = ws[plugin.ws_id]
-        if not data then
-          data = new_ws_data()
-          ws[plugin.ws_id] = data
-        end
-        local plugins = data.plugins
-        local combos = data.combos
-
-        plugins[name] = true
-
-        -- Retrieve route_id, service_id, and consumer_id from the plugin object, if they exist
-        local route_id = plugin.route and plugin.route.id
-        local service_id = plugin.service and plugin.service.id
-        local consumer_id = plugin.consumer and plugin.consumer.id
-
-        -- Determine if the plugin configuration is global (i.e., not tied to any route, service, consumer or group)
-        if not (route_id or service_id or consumer_id) and plugin.ws_id == kong.default_workspace then
-          -- Store the global configuration for the plugin in the 'globals' table
-          globals[name] = cfg
-        end
-
-        -- Initialize an empty table for the plugin in the 'combos' table if it doesn't already exist
-        combos[name] = combos[name] or {}
-
-        -- Build a compound key using the route_id, service_id, and consumer_id
-        local compound_key = build_compound_key(route_id, service_id, consumer_id)
-
-        -- Store the plugin configuration in the 'combos' table using the compound key
-        combos[name][compound_key] = cfg
-      end
+    if CONFIGURABLE_PLUGINS[name] then
+      configurable[name] = configurable[name] or {}
+      configurable[name][#configurable[name] + 1] = cfg
     end
 
-    counter = counter + 1
-  end
 
-  if has_plugins then
-    -- loaded_plugins contains all the plugins that we _may_ execute
-    for _, plugin in ipairs(LOADED_PLUGINS) do
-      local name = plugin.name
-      -- ws contains all the plugins that are associated to the request via route/service/global mappings
-      for _, data in pairs(ws) do
-        local plugins = data.plugins
-        if plugins[name] then -- is the plugin associated to the request(workspace/route/service)?
-          local n = plugins[0] + 1
-          plugins[n] = plugin -- next item goes into next slot
-          plugins[0] = n      -- index 0 holds table size
-          plugins[name] = nil -- remove the placeholder value
-        end
-      end
+    -- Create a new entry for the plugin's workspace in the
+    if not plugins_table[plugin.ws_id] then
+      plugins_table[plugin.ws_id] = {}
+    end
+    local handler = kong.db.plugins:get_handlers_by_name(plugin.name)
 
-      local cfg = globals[name]
-      if cfg then
-        for _, phase in ipairs(NON_COLLECTING_PHASES) do
-          if plugin.handler[phase] then
-            local plugins = globals[phase]
-            local n = plugins[0] + 2
-            plugins[0] = n
-            plugins[n] = cfg
-            plugins[n - 1] = plugin
-          end
+    -- build the plugins table for easier consumption of the respective phase. This means we need
+    -- to build a table that is indexed by the workspace and secondly by the phase and
+    -- contains the plugin configuration as well as the handler for that phase.
+    for _, phase in pairs{"rewrite", "access", "log"} do
+      if handler[phase] then
+        -- insert into table
+        if not plugins_table[plugin.ws_id][phase] then
+          plugins_table[plugin.ws_id][phase] = {}
         end
+        plugins_table[plugin.ws_id][phase][cfg.__plugin_id] = { cfg = cfg, handler_fn = handler[phase], name = name }
+        print("name = " .. require("inspect")(name))
+        print("cfg.expression = " .. require("inspect")(cfg.expression))
+        print("handler = " .. require("inspect")(handler))
+        -- add PRIORITY so that the matching is done in the correct order
+        local ok, err = router:add_matcher(handler.PRIORITY, cfg.__plugin_id, cfg.expression)
+        print("ok = " .. require("inspect")(ok))
+        print("err = " .. require("inspect")(err))
       end
     end
+    print("plugins_table = " .. require("inspect")(plugins_table))
+
+    ::continue::
   end
 
   return {
     version = version,
-    ws = ws,
+    plugins_table = plugins_table,
+    router = router,
+    router_context = context,
+    schema = schema,
+    ws = {},
     loaded = LOADED_PLUGINS,
     configure = create_configure(configurable),
     globals = globals,

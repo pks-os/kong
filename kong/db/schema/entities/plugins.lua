@@ -19,6 +19,7 @@ return {
     { instance_name = typedefs.utf8_name },
     { created_at = typedefs.auto_timestamp_s },
     { updated_at = typedefs.auto_timestamp_s },
+    { expression = { type = "string" } },
     { route = { description = "If set, the plugin will only activate when receiving requests via the specified route.", type = "foreign", reference = "routes", default = null, on_delete = "cascade", }, },
     { service = { description = "If set, the plugin will only activate when receiving requests via one of the routes belonging to the specified service. ", type = "foreign", reference = "services", default = null, on_delete = "cascade", }, },
     { consumer = { description = "If set, the plugin will activate only for requests where the specified has been authenticated.", type = "foreign", reference = "consumers", default = null, on_delete = "cascade", }, },

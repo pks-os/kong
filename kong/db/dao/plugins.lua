@@ -380,6 +380,14 @@ function Plugins:get_handlers()
   return list
 end
 
+function Plugins:get_handlers_by_name(name)
+  if not self.handlers then
+    return nil, "Please invoke Plugins:load_plugin_schemas() before invoking Plugins:get_plugin_handlers"
+  end
+
+  return self.handlers[name]
+end
+
 -- @ca_id: the id of ca certificate to be searched
 -- @limit: the maximum number of entities to return (must >= 0)
 -- @plugin_names: the plugin names to filter the entities (must be of type table, string or nil)

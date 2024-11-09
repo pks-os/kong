@@ -17,6 +17,14 @@ return {
       CREATE INDEX IF NOT EXISTS clustering_sync_delta_version_idx ON clustering_sync_delta (version);
       END;
       $$;
+
+      DO $$
+      BEGIN
+        ALTER TABLE IF EXISTS ONLY "plugins" ADD "expression" TEXT;
+      EXCEPTION WHEN DUPLICATE_COLUMN THEN
+        -- Do nothing, accept existing state
+      END;
+      $$;
     ]]
   }
 }

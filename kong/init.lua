@@ -93,6 +93,7 @@ local pl_file = require "pl.file"
 local req_dyn_hook = require "kong.dynamic_hook"
 local uuid = require("kong.tools.uuid").uuid
 local kong_time = require("kong.tools.time")
+local get_header = require("kong.tools.http").get_header
 
 
 local kong             = kong
@@ -173,7 +174,7 @@ do
     init_worker_errors_str = table.concat(init_worker_errors, ", ")
 
     return ngx_log(ngx_CRIT, "worker initialization error: ", err,
-                             "; this node must be restarted")
+                              "; this node must be restarted")
   end
 
 
@@ -188,13 +189,13 @@ do
                               "initialization errors; this node must be ",
                               "restarted (", init_worker_errors_str, ")")
   end
-end
+  end
 
 
-local is_data_plane
-local is_control_plane
-local is_dbless
-do
+  local is_data_plane
+  local is_control_plane
+  local is_dbless
+  do
   is_data_plane = function(config)
     return config.role == "data_plane"
   end
@@ -208,11 +209,11 @@ do
   is_dbless = function(config)
     return config.database == "off"
   end
-end
+  end
 
 
-local reset_kong_shm
-do
+  local reset_kong_shm
+  do
   local preserve_keys = {
     "kong:node_id",
     constants.DYN_LOG_LEVEL_KEY,
@@ -257,10 +258,10 @@ do
     end
     kong_shm:flush_expired(0)
   end
-end
+  end
 
 
-local function setup_plugin_context(ctx, plugin, conf)
+  local function setup_plugin_context(ctx, plugin, conf)
   if plugin.handler._go then
     ctx.ran_go_plugin = true
   end
@@ -268,19 +269,19 @@ local function setup_plugin_context(ctx, plugin, conf)
   kong_global.set_named_ctx(kong, "plugin", plugin.handler, ctx)
   kong_global.set_namespaced_log(kong, plugin.name, ctx)
   ctx.plugin_id = conf.__plugin_id
-end
+  end
 
 
-local function reset_plugin_context(ctx, old_ws)
+  local function reset_plugin_context(ctx, old_ws)
   kong_global.reset_log(kong, ctx)
 
   if old_ws then
     ctx.workspace = old_ws
   end
-end
+  end
 
 
-local function execute_init_worker_plugins_iterator(plugins_iterator, ctx)
+  local function execute_init_worker_plugins_iterator(plugins_iterator, ctx)
   local iterator, plugins = plugins_iterator:get_init_worker_iterator()
   if not iterator then
     return
@@ -306,10 +307,10 @@ local function execute_init_worker_plugins_iterator(plugins_iterator, ctx)
   end
 
   return errors
-end
+  end
 
 
-local function execute_global_plugins_iterator(plugins_iterator, phase, ctx)
+  local function execute_global_plugins_iterator(plugins_iterator, phase, ctx)
   if not plugins_iterator.has_plugins then
     return
   end
@@ -354,10 +355,10 @@ local function execute_global_plugins_iterator(plugins_iterator, phase, ctx)
   if has_timing then
     req_dyn_hook_run_hook("timing", "after:plugin_iterator")
   end
-end
+  end
 
 
-local function execute_collecting_plugins_iterator(plugins_iterator, phase, ctx)
+  local function execute_collecting_plugins_iterator(plugins_iterator, phase, ctx)
   if not plugins_iterator.has_plugins then
     return
   end
@@ -427,10 +428,10 @@ local function execute_collecting_plugins_iterator(plugins_iterator, phase, ctx)
   end
 
   ctx.delay_response = nil
-end
+  end
 
 
-local function execute_collected_plugins_iterator(plugins_iterator, phase, ctx)
+  local function execute_collected_plugins_iterator(plugins_iterator, phase, ctx)
   if not plugins_iterator.has_plugins then
     return
   end
@@ -475,10 +476,10 @@ local function execute_collected_plugins_iterator(plugins_iterator, phase, ctx)
   if has_timing then
     req_dyn_hook_run_hook("timing", "after:plugin_iterator")
   end
-end
+  end
 
 
-local function execute_cache_warmup(kong_config)
+  local function execute_cache_warmup(kong_config)
   if is_dbless(kong_config) then
     return true
   end
@@ -491,10 +492,10 @@ local function execute_cache_warmup(kong_config)
   end
 
   return true
-end
+  end
 
 
-local function flush_delayed_response(ctx)
+  local function flush_delayed_response(ctx)
   ctx.delay_response = nil
   ctx.buffered_proxying = nil
 
@@ -506,20 +507,20 @@ local function flush_delayed_response(ctx)
   local dr = ctx.delayed_response
   local message = dr.content and dr.content.message or dr.content
   kong.response.error(dr.status_code, message, dr.headers)
-end
+  end
 
 
-local function has_declarative_config(kong_config)
+  local function has_declarative_config(kong_config)
   local declarative_config = kong_config.declarative_config
   local declarative_config_string = kong_config.declarative_config_string
 
   return declarative_config or declarative_config_string,
-         declarative_config ~= nil,         -- is filename
-         declarative_config_string ~= nil   -- is string
-end
+          declarative_config ~= nil,         -- is filename
+          declarative_config_string ~= nil   -- is string
+  end
 
 
-local function parse_declarative_config(kong_config, dc)
+  local function parse_declarative_config(kong_config, dc)
   local declarative_config, is_file, is_string = has_declarative_config(kong_config)
 
   local entities, err, _, meta, hash
@@ -549,10 +550,10 @@ local function parse_declarative_config(kong_config, dc)
   end
 
   return entities, nil, meta, hash
-end
+  end
 
 
-local function declarative_init_build()
+  local function declarative_init_build()
   local default_ws = kong.db.workspaces:select_by_name("default")
   kong.default_workspace = default_ws and default_ws.id or kong.default_workspace
 
@@ -567,10 +568,10 @@ local function declarative_init_build()
   end
 
   return true
-end
+  end
 
 
-local function load_declarative_config(kong_config, entities, meta, hash)
+  local function load_declarative_config(kong_config, entities, meta, hash)
   local opts = {
     name = "declarative_config",
   }
@@ -604,10 +605,10 @@ local function load_declarative_config(kong_config, entities, meta, hash)
   end
 
   return nil, err
-end
+  end
 
 
-local function list_migrations(migtable)
+  local function list_migrations(migtable)
   local list = {}
   for _, t in ipairs(migtable) do
     local mignames = {}
@@ -615,19 +616,19 @@ local function list_migrations(migtable)
       table.insert(mignames, mig.name)
     end
     table.insert(list, string.format("%s (%s)", t.subsystem,
-                       table.concat(mignames, ", ")))
+                        table.concat(mignames, ", ")))
   end
   return table.concat(list, " ")
-end
+  end
 
 
--- Kong public context handlers.
--- @section kong_handlers
+  -- Kong public context handlers.
+  -- @section kong_handlers
 
-local Kong = {}
+  local Kong = {}
 
 
-function Kong.init()
+  function Kong.init()
   local pl_path = require "pl.path"
   local conf_loader = require "kong.conf_loader"
 
@@ -724,7 +725,7 @@ function Kong.init()
     kong.db.declarative_config = dc
 
     if is_http_module or
-       (#config.proxy_listeners == 0 and
+        (#config.proxy_listeners == 0 and
         #config.admin_listeners == 0 and
         #config.status_listeners == 0)
     then
@@ -795,10 +796,10 @@ function Kong.init()
             " token for request debugging: ",
             kong.request_debug_token)
   end
-end
+  end
 
 
-function Kong.init_worker()
+  function Kong.init_worker()
 
   emmy_debugger.init()
 
@@ -997,10 +998,10 @@ function Kong.init_worker()
       if is_data_plane(kong.configuration) then
         ngx.timer.at(0, function(premature)
           kong.rpc:connect(premature,
-                           "control_plane", kong.configuration.cluster_control_plane,
-                           "/v2/outlet",
-                           cluster_tls.get_cluster_cert(kong.configuration).cdata,
-                           cluster_tls.get_cluster_cert_key(kong.configuration))
+                            "control_plane", kong.configuration.cluster_control_plane,
+                            "/v2/outlet",
+                            cluster_tls.get_cluster_cert(kong.configuration).cdata,
+                            cluster_tls.get_cluster_cert_key(kong.configuration))
         end)
 
       else -- control_plane
@@ -1022,17 +1023,17 @@ function Kong.init_worker()
   end
 
   plugins_iterator:configure(ctx)
-end
+  end
 
 
-function Kong.exit_worker()
+  function Kong.exit_worker()
   if process.type() ~= "privileged agent" and not is_control_plane(kong.configuration) then
     plugin_servers.stop()
   end
-end
+  end
 
 
-function Kong.ssl_certificate()
+  function Kong.ssl_certificate()
   -- Note: ctx here is for a connection (not for a single request)
   local ctx = get_ctx_table(fetch_table(CTX_NS, CTX_NARR, CTX_NREC))
 
@@ -1049,10 +1050,10 @@ function Kong.ssl_certificate()
 
   -- TODO: do we want to keep connection context?
   kong.table.clear(ngx.ctx)
-end
+  end
 
 
-function Kong.preread()
+  function Kong.preread()
   local ctx = get_ctx_table(fetch_table(CTX_NS, CTX_NARR, CTX_NREC))
   if not ctx.KONG_PROCESSING_START then
     ctx.KONG_PROCESSING_START = get_start_time_ms()
@@ -1202,8 +1203,51 @@ function Kong.access()
   runloop.access.before(ctx)
 
   local plugins_iterator = runloop.get_plugins_iterator()
+  local context = plugins_iterator.router_context
+  local router = plugins_iterator.router
 
-  execute_collecting_plugins_iterator(plugins_iterator, "access", ctx)
+  context:reset()
+  local service = kong.router.get_service()
+  context:add_value("service.id", service.id)
+  context:add_value("service.name", service.name)
+
+  local route = kong.router.get_route()
+  context:add_value("route.id", route.id)
+  context:add_value("route.name", route.name)
+
+  -- local host = get_header("http.host", ngx.ctx)
+  -- context:add_value("http.host", host)
+
+  local current_ws = ctx.workspace
+  local plugins_for_this_workspace = plugins_iterator.plugins_table[current_ws]
+  print("plugins_for_this_workspace = " .. require("inspect")(plugins_for_this_workspace))
+  if not plugins_for_this_workspace then
+    return
+  end
+  -- get plugins that have a access phase handler
+  local plugins = plugins_for_this_workspace["access"]
+
+  -- This should return a full set of plugins that match against this context.
+  local matched = router:execute(context, true)
+  print("matched = " .. require("inspect")(matched))
+  -- if no match, exit early
+  if not matched then
+    return
+  end
+  -- get all results
+  local results = context:get_all_results()
+  print("results = " .. require("inspect")(results))
+  -- iterate over all results
+  for i = 1, #results do
+    local result = results[i]
+    print("result = " .. require("inspect")(result))
+    -- find plugin by uuid
+    local plugin = plugins[result.uuid]
+    print("plugin = " .. require("inspect")(plugin))
+    local co = coroutine.create(plugin.handler_fn)
+    local cok, cerr = coroutine.resume(co, plugin.handler_fn, plugin.cfg)
+  end
+
 
   if ctx.delayed_response then
     ctx.KONG_ACCESS_ENDED_AT = get_updated_now_ms()
