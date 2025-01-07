@@ -76,7 +76,7 @@ function _M:init_worker()
     -- cp does not support kong.sync.v2
     if not has_sync_v2 then
       ngx.log(ngx.WARN, "rpc sync is disabled in CP.")
-      assert(self.rpc:sync_every(EACH_SYNC_DELAY), true)  -- stop timer
+      assert(self.rpc:sync_every(EACH_SYNC_DELAY, true)) -- stop timer
       return
     end
 
@@ -86,6 +86,11 @@ function _M:init_worker()
     assert(self.rpc:sync_every(EACH_SYNC_DELAY))
 
   end, "clustering:jsonrpc", "connected")
+
+  -- if rpc is down we will also stop to sync
+  worker_events.register(function()
+    assert(self.rpc:sync_every(EACH_SYNC_DELAY, true))  -- stop timer
+  end, "clustering:jsonrpc", "disconnected")
 end
 
 
