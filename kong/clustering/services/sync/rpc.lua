@@ -8,6 +8,7 @@ local constants = require("kong.constants")
 local concurrency = require("kong.concurrency")
 local isempty = require("table.isempty")
 local events = require("kong.runloop.events")
+local EMPTY = require("kong.tools.table").EMPTY
 
 
 local insert_entity_for_txn = declarative.insert_entity_for_txn
@@ -26,6 +27,7 @@ local ipairs = ipairs
 local ngx_null = ngx.null
 local ngx_log = ngx.log
 local ngx_ERR = ngx.ERR
+local ngx_INFO = ngx.INFO
 local ngx_DEBUG = ngx.DEBUG
 
 
@@ -94,7 +96,7 @@ function _M:init_cp(manager)
       cert_details = node_info.cert_details,  -- get from rpc call
       sync_status = CLUSTERING_SYNC_STATUS.NORMAL,
       config_hash = default_namespace_version,
-      rpc_capabilities = rpc_peers and rpc_peers[node_id] or {},
+      rpc_capabilities = rpc_peers and rpc_peers[node_id] or EMPTY,
     }, { ttl = purge_delay, no_broadcast_crud_event = true, })
     if not ok then
       ngx_log(ngx_ERR, "unable to update clustering data plane status: ", err)
@@ -140,6 +142,8 @@ function _M:init_dp(manager)
       kong_shm:set(CLUSTERING_DATA_PLANES_LATEST_VERSION_KEY, version)
       return self:sync_once()
     end
+
+    ngx_log(ngx_DEBUG, "no sync runs, version is ", version)
 
     return true
   end)
@@ -223,6 +227,8 @@ local function do_sync()
 
   local wipe = ns_delta.wipe
   if wipe then
+    ngx_log(ngx_INFO, "[kong.sync.v2] full sync begins")
+
     t:db_drop(false)
   end
 
@@ -333,6 +339,8 @@ local function do_sync()
   end
 
   if wipe then
+    ngx_log(ngx_INFO, "[kong.sync.v2] full sync ends")
+
     kong.core_cache:purge()
     kong.cache:purge()
 
