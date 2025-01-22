@@ -27,6 +27,7 @@ local ipairs = ipairs
 local ngx_null = ngx.null
 local ngx_log = ngx.log
 local ngx_ERR = ngx.ERR
+local ngx_WARN = ngx.WARN
 local ngx_INFO = ngx.INFO
 local ngx_DEBUG = ngx.DEBUG
 
@@ -173,6 +174,17 @@ local function is_rpc_ready()
 
     -- retry later
     ngx.sleep(0.1 * i)
+  end
+end
+
+
+-- tell cp we already updated the version by rpc notification
+local function update_status(ver)
+  local msg = { default = { version = ver, }, }
+
+  local ok, err = kong.rpc:notify("control_plane", "kong.sync.v2.get_delta", msg)
+  if not ok then
+    ngx_log(ngx_ERR, "update status notification failed: ", err)
   end
 end
 
@@ -374,28 +386,19 @@ local function sync_handler(premature)
   if not res and err ~= "timeout" then
     ngx_log(ngx_ERR, "unable to create worker mutex and sync: ", err)
   end
+
+  return res, err
 end
 
 
-local sync_once_impl
-
-
-local function start_sync_once_timer(retry_count)
-  local ok, err = kong.timer:at(0, sync_once_impl, retry_count or 0)
-  if not ok then
-    return nil, err
-  end
-
-  return true
-end
-
-
-function sync_once_impl(premature, retry_count)
+local function sync_once_impl(premature, retry_count)
   if premature then
     return
   end
 
-  sync_handler()
+  local version_before_sync = get_current_version()
+
+  local _, err = sync_handler()
 
   -- check if "kong.sync.v2.notify_new_version" updates the latest version
 
@@ -408,17 +411,38 @@ function sync_once_impl(premature, retry_count)
   local current_version = get_current_version()
   if current_version >= latest_notified_version then
     ngx_log(ngx_DEBUG, "version already updated")
+
+    -- version changed, we should update status
+    if version_before_sync ~= current_version then
+      update_status(current_version)
+    end
+
     return
   end
 
   -- retry if the version is not updated
   retry_count = retry_count or 0
-  if retry_count > MAX_RETRY then
-    ngx_log(ngx_ERR, "sync_once retry count exceeded. retry_count: ", retry_count)
+
+  if retry_count >= MAX_RETRY then
+    ngx_log(ngx_WARN, "sync_once retry count exceeded. retry_count: ", retry_count)
     return
   end
 
-  return start_sync_once_timer(retry_count + 1)
+  -- we do not count a timed out sync. just retry
+  if err ~= "timeout" then
+    retry_count = retry_count + 1
+  end
+
+  -- in some cases, the new spawned timer will be switched to immediately,
+  -- preventing the coroutine who possesses the mutex to run
+  -- to let other coroutines has a chance to run
+  local ok, err = kong.timer:at(0.1, sync_once_impl, retry_count)
+  -- this is a workaround for a timerng bug, where tail recursion causes failure
+  -- ok could be a string so let's convert it to boolean
+  if not ok then
+    return nil, err
+  end
+  return true
 end
 
 
