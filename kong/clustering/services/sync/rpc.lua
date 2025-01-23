@@ -11,6 +11,7 @@ local events = require("kong.runloop.events")
 local EMPTY = require("kong.tools.table").EMPTY
 
 
+local validate_deltas = require("kong.clustering.services.sync.validate").validate_deltas
 local insert_entity_for_txn = declarative.insert_entity_for_txn
 local delete_entity_for_txn = declarative.delete_entity_for_txn
 local DECLARATIVE_HASH_KEY = constants.DECLARATIVE_HASH_KEY
@@ -189,6 +190,63 @@ local function update_status(ver)
 end
 
 
+local function lmdb_update(db, t, delta, opts, is_full_sync)
+  local delta_type = delta.type
+  local delta_entity = delta.entity
+
+  -- upsert the entity
+  -- delete if exists
+  local old_entity, err = db[delta_type]:select(delta_entity)
+  if err then
+    return nil, err
+  end
+
+  if old_entity and not is_full_sync then
+    local res, err = delete_entity_for_txn(t, delta_type, old_entity, opts)
+    if not res then
+      return nil, err
+    end
+  end
+
+  local res, err = insert_entity_for_txn(t, delta_type, delta_entity, opts)
+  if not res then
+    return nil, err
+  end
+
+  if is_full_sync then
+    return nil
+  end
+
+  return { delta_type, old_entity and "update" or "create", delta_entity, old_entity, }
+end
+
+
+local function lmdb_delete(db, t, delta, opts, is_full_sync)
+  local delta_type = delta.type
+
+  local old_entity, err = db[delta_type]:select(delta.pk, opts)
+  if err then
+    return nil, err
+  end
+
+  -- full sync requires extra torlerance for missing entities
+  if not old_entity then
+    return nil
+  end
+
+  local res, err = delete_entity_for_txn(t, delta_type, old_entity, opts)
+  if not res then
+    return nil, err
+  end
+
+  if is_full_sync then
+    return nil
+  end
+
+  return { delta_type, "delete", old_entity, }
+end
+
+
 local function do_sync()
   if not is_rpc_ready() then
     return nil, "rpc is not ready"
@@ -210,6 +268,7 @@ local function do_sync()
     return nil, "default namespace does not exist inside params"
   end
 
+  local wipe = ns_delta.wipe
   local deltas = ns_delta.deltas
 
   if not deltas then
@@ -235,9 +294,14 @@ local function do_sync()
   end
   assert(type(kong.default_workspace) == "string")
 
+  -- validate deltas
+  local ok, err = validate_deltas(deltas, wipe)
+  if not ok then
+    return nil, err
+  end
+
   local t = txn.begin(512)
 
-  local wipe = ns_delta.wipe
   if wipe then
     ngx_log(ngx_INFO, "[kong.sync.v2] full sync begins")
 
@@ -257,72 +321,28 @@ local function do_sync()
     local delta_version = delta.version
     local delta_type = delta.type
     local delta_entity = delta.entity
-    local ev
 
     -- delta should have ws_id to generate the correct lmdb key
     -- if entity is workspaceable
     -- set the correct workspace for item
     opts.workspace = delta.ws_id
 
-    if delta_entity ~= nil and delta_entity ~= ngx_null then
-      -- upsert the entity
-      -- does the entity already exists?
-      local old_entity, err = db[delta_type]:select(delta_entity)
-      if err then
-        return nil, err
-      end
+    local is_update = delta_entity ~= nil and delta_entity ~= ngx_null
+    local operation_name = is_update and "update" or "delete"
+    local operation = is_update and lmdb_update or lmdb_delete
 
-      -- If we will wipe lmdb, we don't need to delete it from lmdb.
-      if old_entity and not wipe then
-        local res, err = delete_entity_for_txn(t, delta_type, old_entity, opts)
-        if not res then
-          return nil, err
-        end
-      end
+    -- log the operation before executing it, so when failing we know what entity caused it
+    ngx_log(ngx_DEBUG,
+            "[kong.sync.v2] ", operation_name, " entity",
+            ", version: ", delta_version,
+            ", type: ", delta_type)
 
-      local res, err = insert_entity_for_txn(t, delta_type, delta_entity, opts)
-      if not res then
-        return nil, err
-      end
+    local ev, err = operation(db, t, delta, opts, wipe)
+    if err then
+      return nil, err
+    end
 
-      ngx_log(ngx_DEBUG,
-              "[kong.sync.v2] update entity",
-              ", version: ", delta_version,
-              ", type: ", delta_type)
-
-      -- wipe the whole lmdb, should not have events
-      if not wipe then
-        ev = { delta_type, old_entity and "update" or "create", delta_entity, old_entity, }
-      end
-
-    else
-      -- delete the entity, opts for getting correct lmdb key
-      local old_entity, err = db[delta_type]:select(delta.pk, opts) -- composite key
-      if err then
-        return nil, err
-      end
-
-      -- If we will wipe lmdb, we don't need to delete it from lmdb.
-      if old_entity and not wipe then
-        local res, err = delete_entity_for_txn(t, delta_type, old_entity, opts)
-        if not res then
-          return nil, err
-        end
-      end
-
-      ngx_log(ngx_DEBUG,
-              "[kong.sync.v2] delete entity",
-              ", version: ", delta_version,
-              ", type: ", delta_type)
-
-      -- wipe the whole lmdb, should not have events
-      if not wipe then
-        ev = { delta_type, "delete", old_entity, }
-      end
-    end -- if delta_entity ~= nil and delta_entity ~= ngx_null
-
-    -- wipe the whole lmdb, should not have events
-    if not wipe then
+    if ev then
       crud_events_n = crud_events_n + 1
       crud_events[crud_events_n] = ev
     end
