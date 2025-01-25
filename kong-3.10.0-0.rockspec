@@ -185,9 +185,6 @@ build = {
     ["kong.status"] = "kong/status/init.lua",
     ["kong.status.ready"] = "kong/status/ready.lua",
 
-    ["kong.tls.plugins.certificate"] = "kong/tls/plugins/certificate.lua",
-    ["kong.tls.plugins.sni_filter"] = "kong/tls/plugins/sni_filter.lua",
-
     ["kong.tools.dns"] = "kong/tools/dns.lua",
     ["kong.tools.grpc"] = "kong/tools/grpc.lua",
     ["kong.tools.utils"] = "kong/tools/utils.lua",
@@ -250,6 +247,7 @@ build = {
     ["kong.runloop.plugin_servers.rpc.util"] = "kong/runloop/plugin_servers/rpc/util.lua",
     ["kong.runloop.plugin_servers.rpc.mp_rpc"] = "kong/runloop/plugin_servers/rpc/mp_rpc.lua",
     ["kong.runloop.plugin_servers.rpc.pb_rpc"] = "kong/runloop/plugin_servers/rpc/pb_rpc.lua",
+    ["kong.runloop.upstream_retry"] = "kong/runloop/upstream_retry.lua",
     ["kong.runloop.wasm"] = "kong/runloop/wasm.lua",
     ["kong.runloop.wasm.plugins"] = "kong/runloop/wasm/plugins.lua",
     ["kong.runloop.wasm.properties"] = "kong/runloop/wasm/properties.lua",
