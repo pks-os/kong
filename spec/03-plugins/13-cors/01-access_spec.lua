@@ -1,4 +1,4 @@
-local helpers = require "spec.helpers"
+local hybrid_helper = require "spec.hybrid"
 local cjson = require "cjson"
 local inspect = require "inspect"
 local tablex = require "pl.tablex"
@@ -18,8 +18,8 @@ local function sortedpairs(t)
 end
 
 
-for _, strategy in helpers.each_strategy() do
-  describe("Plugin: cors (access) [#" .. strategy .. "]", function()
+hybrid_helper.run_for_each_deploy({}, function(helpers, strategy, deploy, rpc, rpc_sync)
+  describe("Plugin: cors (access) [" .. helpers.format_tags() .. "]", function()
     local proxy_client
 
     local regex_testcases = {
@@ -291,6 +291,14 @@ for _, strategy in helpers.each_strategy() do
         hosts = { "cors14.test" },
       })
 
+      local route15 = bp.routes:insert({
+        hosts = { "cors15.test" },
+      })
+
+      local route16 = bp.routes:insert({
+        hosts = { "cors16.test" },
+      })
+
       local mock_upstream = bp.services:insert {
         host = helpers.mock_upstream_hostname,
         port = helpers.mock_upstream_port,
@@ -461,6 +469,28 @@ for _, strategy in helpers.each_strategy() do
         config = {
           preflight_continue = false,
           origins = { "foo.bar", "*" }
+        }
+      }
+
+      bp.plugins:insert {
+        name = "cors",
+        route = { id = route15.id },
+        config = {
+          allow_origin_absent = false,
+          origins = { "foo.bar" },
+          exposed_headers    = { "x-auth-token" },
+          credentials     = true
+        }
+      }
+
+      bp.plugins:insert {
+        name = "cors",
+        route = { id = route16.id },
+        config = {
+          allow_origin_absent = true,
+          origins = { "foo.bar" },
+          exposed_headers    = { "x-auth-token" },
+          credentials     = true
         }
       }
 
@@ -1130,6 +1160,32 @@ for _, strategy in helpers.each_strategy() do
         assert.equal("true", res.headers["Access-Control-Allow-Credentials"])
         assert.equal("disallowed-domain.test", json.headers["origin"])
       end)
+
+      it("when disable allow_origin_absent, no ACAO", function()
+        local res = assert(proxy_client:send {
+          method  = "GET",
+          headers = {
+            ["Host"]   = "cors15.test",
+          }
+        })
+        assert.res_status(200, res)
+        assert.is_nil(res.headers["Access-Control-Allow-Origin"])
+        assert.is_nil(res.headers["Access-Control-Allow-Credentials"])
+        assert.is_nil(res.headers["Access-Control-Expose-Headers"])
+      end)
+
+      it("when enable allow_origin_absent, ACAO is returned", function()
+        local res = assert(proxy_client:send {
+          method  = "GET",
+          headers = {
+            ["Host"]   = "cors16.test",
+          }
+        })
+        assert.res_status(200, res)
+        assert.equal("foo.bar", res.headers["Access-Control-Allow-Origin"] )
+        assert.equal("true", res.headers["Access-Control-Allow-Credentials"])
+        assert.equal("x-auth-token", res.headers["Access-Control-Expose-Headers"])
+      end)
     end)
   end)
-end
+end)

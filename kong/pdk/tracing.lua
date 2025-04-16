@@ -280,7 +280,9 @@ function span_mt:finish(end_time_ns)
   end
 
   if end_time_ns and end_time_ns < self.start_time_ns then
-    error("invalid span duration", 2)
+    ngx_log(ngx_ERR, "invalid span duration: ",
+        end_time_ns - self.start_time_ns, " for span: ", self.name)
+    return
   end
 
   self.end_time_ns = end_time_ns or ffi_time_unix_nano()
@@ -472,7 +474,7 @@ local function new_tracer(name, options)
   -- Returns the root span by default
   --
   -- @function kong.tracing.active_span
-  -- @phases rewrite, access, header_filter, response, body_filter, log, admin_api
+  -- @phases rewrite, access, header_filter, response, body_filter, log
   -- @treturn table span
   function self.active_span()
     if not VALID_TRACING_PHASES[ngx.get_phase()] then
@@ -485,7 +487,7 @@ local function new_tracer(name, options)
   --- Set the active span
   --
   -- @function kong.tracing.set_active_span
-  -- @phases rewrite, access, header_filter, response, body_filter, log, admin_api
+  -- @phases rewrite, access, header_filter, response, body_filter, log
   -- @tparam table span
   function self.set_active_span(span)
     if not VALID_TRACING_PHASES[ngx.get_phase()] then
@@ -502,7 +504,7 @@ local function new_tracer(name, options)
   --- Create a new Span
   --
   -- @function kong.tracing.start_span
-  -- @phases rewrite, access, header_filter, response, body_filter, log, admin_api
+  -- @phases rewrite, access, header_filter, response, body_filter, log
   -- @tparam string name span name
   -- @tparam table options
   -- @treturn table span

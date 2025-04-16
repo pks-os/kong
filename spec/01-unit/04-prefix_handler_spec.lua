@@ -791,7 +791,7 @@ describe("NGINX conf compiler", function()
           nginx_supstream_keepalive = "120",
         }))
         local nginx_conf = prefix_handler.compile_kong_stream_conf(conf)
-        assert.matches("keepalive%s120;", nginx_conf)
+        assert.matches("[^_]keepalive%s120;", nginx_conf)
       end)
 
       it("does not inject directives if value is 'NONE'", function()
@@ -799,7 +799,7 @@ describe("NGINX conf compiler", function()
           nginx_upstream_keepalive = "NONE",
         }))
         local nginx_conf = prefix_handler.compile_kong_conf(conf)
-        assert.not_matches("keepalive%s+%d+;", nginx_conf)
+        assert.not_matches("[^_]keepalive%s+%d+;", nginx_conf)
       end)
 
       describe("default injected NGINX directives", function()
@@ -900,7 +900,9 @@ describe("NGINX conf compiler", function()
       assert.matches("resolver%s+1%.2%.3%.4 5%.6%.7%.8 ipv6=off;", nginx_conf)
     end)
 
-    describe("#wasm subsystem", function()
+    -- TODO: replace these test cases with ones that assert the proper behavior
+    -- after the feature is removed
+    pending("#wasm subsystem", function()
       local temp_dir, cleanup
       local filter
 
@@ -1611,6 +1613,121 @@ describe("NGINX conf compiler", function()
     it("include nginx-kong-stream-inject.conf in nginx-kong-stream.conf", function()
       local nginx_conf = prefix_handler.compile_kong_stream_conf(helpers.test_conf)
       assert.matches("include 'nginx-kong-stream-inject.conf';", nginx_conf, nil, true)
+    end)
+  end)
+
+  describe("compile_kong_gui_include_conf()", function()
+    describe("Content-Security-Policy", function()
+      it("should not add header by default", function()
+        local conf = assert(conf_loader(helpers.test_conf_path))
+        local gui_include_conf = prefix_handler.compile_kong_gui_include_conf(conf)
+
+        assert.not_matches("add_header Content-Security-Policy", gui_include_conf, nil, true)
+      end)
+
+      it("should add header with default admin_listen", function()
+        local conf = assert(conf_loader(helpers.test_conf_path, {
+          admin_gui_csp_header = "on",
+        }))
+        local gui_include_conf = assert(prefix_handler.compile_kong_gui_include_conf(conf))
+        local found_connect_src = false
+
+        for line in gui_include_conf:gmatch("(.-)\n") do
+          if line:find("add_header Content-Security-Policy", 1, true) then
+            assert.matches("connect-src 'self' https://api.github.com/repos/kong/kong http://$host:9001;", line, nil,
+              true)
+            found_connect_src = true
+            break
+          end
+        end
+
+        assert.True(found_connect_src)
+      end)
+
+      it("should add header with one more secure admin_listen", function()
+        local conf = assert(conf_loader(helpers.test_conf_path, {
+          admin_gui_csp_header = "on",
+          admin_listen = "127.0.0.1:9001, 127.0.0.1:9444 ssl",
+        }))
+        local gui_include_conf = assert(prefix_handler.compile_kong_gui_include_conf(conf))
+        local found_connect_src = false
+
+        for line in gui_include_conf:gmatch("(.-)\n") do
+          if line:find("add_header Content-Security-Policy", 1, true) then
+            assert.matches(
+            "connect-src 'self' https://api.github.com/repos/kong/kong http://$host:9001 https://$host:9444;", line, nil,
+              true)
+            found_connect_src = true
+            break
+          end
+        end
+
+        assert.True(found_connect_src)
+      end)
+
+      it("should add header with only secure admin_listen", function()
+        local conf = assert(conf_loader(helpers.test_conf_path, {
+          admin_gui_csp_header = "on",
+          admin_listen = "127.0.0.1:9444 ssl"
+        }))
+        local gui_include_conf = assert(prefix_handler.compile_kong_gui_include_conf(conf))
+        local found_connect_src = false
+
+        for line in gui_include_conf:gmatch("(.-)\n") do
+          if line:find("add_header Content-Security-Policy", 1, true) then
+            assert.matches(
+            "connect-src 'self' https://api.github.com/repos/kong/kong https://$host:9444;", line, nil,
+              true)
+            found_connect_src = true
+            break
+          end
+        end
+
+        assert.True(found_connect_src)
+      end)
+
+      it("should add header without admin_listen", function()
+        -- Although kong_gui is not served when admin_listeners is off, we are test against the
+        -- compile function itself.
+        local conf = assert(conf_loader(helpers.test_conf_path, {
+          admin_gui_csp_header = "on",
+          admin_listen = "off"
+        }))
+        local gui_include_conf = assert(prefix_handler.compile_kong_gui_include_conf(conf))
+        local found_connect_src = false
+
+        for line in gui_include_conf:gmatch("(.-)\n") do
+          if line:find("add_header Content-Security-Policy", 1, true) then
+            assert.matches(
+            "connect-src 'self' https://api.github.com/repos/kong/kong;", line, nil, true)
+            found_connect_src = true
+            break
+          end
+        end
+
+        assert.True(found_connect_src)
+      end)
+
+      it("should add header with custom admin_gui_api_url", function()
+        local conf = assert(conf_loader(helpers.test_conf_path, {
+          admin_gui_csp_header = "on",
+          admin_gui_api_url = "http://admin-api.kong.local:18001"
+        }))
+        local gui_include_conf = assert(prefix_handler.compile_kong_gui_include_conf(conf))
+        local found_connect_src = false
+
+        for line in gui_include_conf:gmatch("(.-)\n") do
+          if line:find("add_header Content-Security-Policy", 1, true) then
+            assert.matches(
+            "connect-src 'self' https://api.github.com/repos/kong/kong http://admin-api.kong.local:18001;", line, nil,
+              true)
+            found_connect_src = true
+            break
+          end
+        end
+
+        assert.True(found_connect_src)
+      end)
     end)
   end)
 end)

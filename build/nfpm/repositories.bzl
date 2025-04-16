@@ -34,6 +34,8 @@ nfpm_release_select = repository_rule(
     },
 )
 
+# 2.38.0+ (2.41.2 tried) breaks the way we do rpm signing/Cloudsmith resigning
+# keep at 2.37.1 until further notice ~IF
 def nfpm_repositories():
     npfm_matrix = [
         ["linux", "x86_64", "3e1fe85c9a224a221c64cf72fc19e7cd6a0a51a5c4f4b336e3b8eccd417116a3"],

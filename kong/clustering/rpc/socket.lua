@@ -35,6 +35,7 @@ local CLUSTERING_PING_INTERVAL = constants.CLUSTERING_PING_INTERVAL
 local PING_WAIT = CLUSTERING_PING_INTERVAL * 1.5
 local PING_TYPE = "PING"
 local PONG_TYPE = "PONG"
+local ngx_INFO = ngx.INFO
 local ngx_WARN = ngx.WARN
 local ngx_DEBUG = ngx.DEBUG
 
@@ -149,10 +150,17 @@ function _M:process_rpc_msg(payload, collection)
   if payload_method then
     -- invoke
 
-    ngx_log(ngx_DEBUG, "[rpc] got RPC call: ", payload_method, " (id: ", payload_id, ")")
+    kong.log.trace("[rpc] got RPC call: ", payload_method, " (id: ", payload_id, ")")
 
     local dispatch_cb = self.manager.callbacks.callbacks[payload_method]
-    if not dispatch_cb and payload_id then
+    if not dispatch_cb then
+      -- for RPC notify
+      if not payload_id then
+        ngx_log(ngx_INFO, "[rpc] unable to find RPC notify call: ", payload_method)
+        return true
+      end
+
+      -- for RPC call
       local res, err = self:push_response(new_error(payload_id, jsonrpc.METHOD_NOT_FOUND),
                                           "unable to send \"METHOD_NOT_FOUND\" error back to client: ",
                                           collection)
@@ -178,11 +186,18 @@ function _M:process_rpc_msg(payload, collection)
 
       -- collection is nil, it means it is a single call
       -- we should call async function
-      local name = string_format("JSON-RPC callback for node_id: %s, id: %d, method: %s",
-                                 self.node_id, payload_id or 0, payload_method)
+      -- random is for avoiding timer's name confliction
+      local name = string_format("JSON-RPC callback for node_id: %s, id: %d, rand: %d, method: %s",
+                                 self.node_id, payload_id or 0, math.random(10^5), payload_method)
       res, err = kong.timer:named_at(name, 0, _M._dispatch, self, dispatch_cb, payload)
 
-      if not res and payload_id then
+      if not res then
+        -- for RPC notify
+        if not payload_id then
+          return nil, "unable to dispatch JSON-RPC notify call: " .. err
+        end
+
+        -- for RPC call
         local reso, erro = self:push_response(new_error(payload_id, jsonrpc.INTERNAL_ERROR),
                                               "unable to send \"INTERNAL_ERROR\" error back to client: ",
                                               collection)

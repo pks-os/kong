@@ -65,7 +65,9 @@ function _M:notify_all_nodes()
   for _, node in ipairs(get_all_nodes_with_sync_cap()) do
     local res, err = kong.rpc:call(node, "kong.sync.v2.notify_new_version", msg)
     if not res then
-      if not err:find("requested capability does not exist", nil, true) then
+      if not err:find("requested capability does not exist", nil, true) and
+         not err:find("node is not connected", nil, true)
+      then
         ngx_log(ngx_ERR, "unable to notify ", node, " new version: ", err)
       end
     end
@@ -86,7 +88,8 @@ function _M:entity_delta_writer(entity, name, options, ws_id, is_delete)
     return nil, err
   end
 
-  self:notify_all_nodes()
+  -- event "dao:crud" => handle_dao_crud_event() =>
+  --   post_push_config_event() => self:notify_all_nodes()
 
   return entity -- for other hooks
 end
@@ -97,7 +100,7 @@ function _M:register_dao_hooks()
   local function is_db_export(name)
     local db_export = kong.db[name].schema.db_export
 
-    ngx_log(ngx_DEBUG, "[kong.sync.v2] name: ", name, " db_export: ", db_export)
+    kong.log.trace("[kong.sync.v2] name: ", name, " db_export: ", db_export)
 
     return db_export == nil or db_export == true
   end

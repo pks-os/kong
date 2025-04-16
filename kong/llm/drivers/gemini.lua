@@ -83,7 +83,7 @@ local function handle_stream_event(event_t, model_info, route_type)
 
   local event, err = cjson.decode(event_t.data)
   if err then
-    ngx.log(ngx.WARN, "failed to decode stream event frame from gemini: " .. err)
+    ngx.log(ngx.WARN, "failed to decode stream event frame from gemini: ", err)
     return nil, "failed to decode stream event frame from gemini", nil
   end
 
@@ -116,7 +116,7 @@ local function to_tools(in_tools)
   if not in_tools then
     return nil
   end
- 
+
   local out_tools
 
   for i, v in ipairs(in_tools) do
@@ -519,7 +519,7 @@ function _M.configure_request(conf, identity_interface)
 
 
   -- if the path is read from a URL capture, ensure that it is valid
-  parsed_url.path = string_gsub(parsed_url.path, "^/*", "/")
+  parsed_url.path = (parsed_url.path and string_gsub(parsed_url.path, "^/*", "/")) or "/"
 
   kong.service.request.set_path(parsed_url.path)
   kong.service.request.set_scheme(parsed_url.scheme)
